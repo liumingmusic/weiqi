@@ -262,14 +262,15 @@
           if (t) t.textContent = 'AI 思考中… ' + Math.round(p * 100) + '%';
         }
       },
-      onStatus: function (s) {
+      onStatus: function (s, p, reason) {
         if (s === 'ready') {
           hideKataOverlay();
           updateEngineTag();
           toast('KataGo 已就绪，开始思考');
           if (mode === 'pve' && board.current === aiColor && !gameOver) scheduleAI();
         } else if (s === 'fallback') {
-          showKataFallback();
+          if (reason) console.warn('[KataGo] 模型不可用，原因：', reason);
+          showKataFallback(reason);
           updateEngineTag();
           toast('KataGo 不可用，已回退到内置 AI');
           if (mode === 'pve' && board.current === aiColor && !gameOver) scheduleAI();
@@ -328,7 +329,7 @@
     var ov = document.getElementById('katago-overlay');
     if (ov) ov.classList.add('hidden');
   }
-  function showKataFallback() {
+  function showKataFallback(reason) {
     var ov = document.getElementById('katago-overlay');
     var title = document.getElementById('katago-title');
     var m = document.getElementById('katago-msg');
@@ -336,8 +337,16 @@
     var ok = document.getElementById('katago-ok');
     if (barWrap) barWrap.classList.remove('indeterminate');
     if (title) title.textContent = '未加载 KataGo 模型';
-    if (m) m.innerHTML = '模型文件缺失或下载失败。<br>已自动切换为内置搜索 AI，可正常对弈。<br>' +
-      '<span style="font-size:12px">如需真模型：终端运行 <b>bash katago/fetch_model.sh</b> 下载，再硬刷新页面。</span>';
+    if (m) {
+      m.innerHTML = 'KataGo 模型下载较慢或中断，已自动切换为内置搜索 AI，可正常对弈。<br>' +
+        '<span style="font-size:12px">想用真模型：稍后硬刷新页面（Cmd/Ctrl+Shift+R）重试即可。</span>';
+      if (reason) {
+        var rd = document.createElement('div');
+        rd.style.cssText = 'margin-top:6px;font-size:11px;opacity:.72;font-family:monospace;word-break:break-all;';
+        rd.textContent = '原因：' + reason;
+        m.appendChild(rd);
+      }
+    }
     if (ok) ok.classList.remove('hidden');
     if (ov) ov.classList.remove('hidden');
   }
