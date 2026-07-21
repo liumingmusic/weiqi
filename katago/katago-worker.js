@@ -47,30 +47,82 @@
     ort.env.wasm.proxy = false;
   }
 
-  // 带进度条的模型下载
+  // 断点续传 + 失败重试的模型下载。
+  // GitHub Pages 对 72MB 大文件偶发断流，若一次性流式读取则直接失败回退；
+  // 这里用 Range 分块下载，单块失败自动重试、断点续传，避免整包重下或失败。
+  var CHUNK_SIZE = 6 * 1024 * 1024;   // 每块 6MB
+  var CHUNK_RETRY = 6;                // 单块最多重试次数
+  var WHOLE_RETRY = 3;                // 整包兜底最多重试轮数
+
+  function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  function fetchHead(url) {
+    return fetch(url, { method: 'HEAD' }).then(function (r) {
+      if (!r.ok) return 0;
+      return +r.headers.get('content-length') || 0;
+    }).catch(function () { return 0; });
+  }
+
+  // 单块下载：失败自动重试（断点续传由 Range 保证从 start 起）
+  function fetchChunk(url, start, end, attempt) {
+    return fetch(url, { headers: { Range: 'bytes=' + start + '-' + (end - 1) } })
+      .then(function (r) {
+        if (r.status !== 206 && r.status !== 200) throw new Error('分块下载 HTTP ' + r.status + ' (' + start + '-' + end + ')');
+        return r.arrayBuffer();
+      })
+      .then(function (buf) { return new Uint8Array(buf); })
+      .catch(function (err) {
+        if (attempt >= CHUNK_RETRY) throw err;
+        return delay(700 * attempt).then(function () { return fetchChunk(url, start, end, attempt + 1); });
+      });
+  }
+
+  // 整包兜底（服务器不支持 Range 时）：失败整体重试
+  function fetchWhole(url, attempt) {
+    return fetch(url).then(function (r) {
+      if (!r.ok) throw new Error('模型下载失败 HTTP ' + r.status + ' (' + url + ')');
+      return r.arrayBuffer();
+    }).then(function (buf) { return new Uint8Array(buf); })
+      .catch(function (err) {
+        if (attempt >= WHOLE_RETRY) throw err;
+        return delay(1000 * attempt).then(function () { return fetchWhole(url, attempt + 1); });
+      });
+  }
+
   function fetchModel(modelUrl) {
-    return fetch(modelUrl).then(function (resp) {
-      if (!resp.ok) throw new Error('模型下载失败 HTTP ' + resp.status + ' (' + modelUrl + ')');
-      var total = +resp.headers.get('content-length') || 0;
-      var reader = resp.body.getReader();
-      var chunks = [];
-      var loaded = 0;
-      function pump() {
-        return reader.read().then(function (r) {
-          if (r.done) return;
-          chunks.push(r.value);
-          loaded += r.value.length;
-          if (total) self.postMessage({ type: 'progress', value: loaded / total });
-          else self.postMessage({ type: 'progress', value: -1 }); // 未知大小->不确定进度
-          return pump();
+    return fetchHead(modelUrl).then(function (total) {
+      // 拿不到大小或文件很小：整包下载（带整体重试）
+      if (!total || total <= CHUNK_SIZE) {
+        return fetchWhole(modelUrl, 0).then(function (u8) {
+          self.postMessage({ type: 'progress', value: 1 });
+          return u8.buffer.slice(0, u8.length);
         });
       }
-      return pump().then(function () {
-        var buf = new Uint8Array(loaded);
-        var off = 0;
-        for (var i = 0; i < chunks.length; i++) { buf.set(chunks[i], off); off += chunks[i].length; }
+      var chunks = [];
+      function next(i) {
+        var start = i * CHUNK_SIZE;
+        if (start >= total) {
+          var buf = new Uint8Array(total);
+          var off = 0;
+          for (var k = 0; k < chunks.length; k++) { buf.set(chunks[k], off); off += chunks[k].length; }
+          self.postMessage({ type: 'progress', value: 1 });
+          return buf.buffer.slice(0, total);
+        }
+        var end = Math.min(start + CHUNK_SIZE, total);
+        return fetchChunk(modelUrl, start, end, 0).then(function (u8) {
+          chunks.push(u8);
+          var loaded = 0;
+          for (var k = 0; k < chunks.length; k++) loaded += chunks[k].length;
+          self.postMessage({ type: 'progress', value: loaded / total });
+          return next(i + 1);
+        });
+      }
+      return next(0);
+    }).catch(function (err) {
+      // HEAD/分块路径失败（如服务器不支持 Range）：退化到整包重试
+      return fetchWhole(modelUrl, 0).then(function (u8) {
         self.postMessage({ type: 'progress', value: 1 });
-        return buf.buffer.slice(0, loaded);
+        return u8.buffer.slice(0, u8.length);
       });
     });
   }
