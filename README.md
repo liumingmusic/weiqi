@@ -96,6 +96,23 @@ python3 -m http.server 8080
 
   然后修改 `katago/katago-worker.js` 中的默认模型路径即可。
 
+### WASM 运行时走 CDN（解决国内加载失败）
+
+KataGo 的 WASM 运行时（`ort-wasm-simd.wasm`，约 10 MB）**默认从 jsDelivr CDN 加载**
+（`fastly.jsdelivr.net` 国内镜像，返回 `Access-Control-Allow-Origin: *` 的合法 wasm）。
+原因：GitHub Pages 对大文件在部分国内网络下会被拦截并返回 HTML 错误页，
+导致 `WebAssembly.instantiate` 报 `expected magic word 00 61 73 6d, found 3c 21 44 4f`（即拿到 `<!DOCTYPE`）。
+运行时按 `fastly.jsdelivr.net → cdn.jsdelivr.net → 本地 ort/` 三级回退，本地文件仍在仓库内兜底。
+若想完全自托管，把 `katago/katago-worker.js` 里的 `ORT_WASM_CDNS` 改成你自己的 CDN 地址即可。
+
+### 模型能否走公共 CDN？
+
+目前**不行**：72 MB 模型没有「CORS 开放」的公共 CDN 可用——
+jsDelivr gh 对 >50 MB 文件返回 403，hf-mirror 跳转后的真实地址未带 `Access-Control-Allow-Origin`（浏览器跨域会被拦）。
+因此模型仍走 GitHub Pages 同源（无 CORS 问题，仅取决于网络能否拉大文件，已做分块断点续传+重试兜底）。
+如果你要自己托管模型 CDN：把模型放到**腾讯云 COS / 阿里云 OSS** 等并配置 `Access-Control-Allow-Origin: *`，
+再把地址填进 `katago/katago-worker.js` 的 `MODEL_MIRRORS` 数组即可自动回退使用。
+
 ---
 
 ## 🧪 测试
