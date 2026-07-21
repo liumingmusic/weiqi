@@ -1,6 +1,6 @@
 // Service Worker：缓存应用外壳，实现离线可用
-// v2: 新增 KataGo 引擎相关文件预缓存；72MB 模型与 wasm 走运行时缓存(首次在线加载后离线可用)。
-var CACHE = 'weiqi-v2';
+// v3: 模型下载改为分块断点续传+重试(修复 CDN 拉 72MB 偶发断流导致的回退)；露出真实错误原因。
+var CACHE = 'weiqi-v3';
 var ASSETS = [
   './', './index.html', './manifest.webmanifest', './icon.svg',
   './css/style.css',
