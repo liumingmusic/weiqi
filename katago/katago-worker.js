@@ -125,6 +125,12 @@
     var size = msg.size;
     var visits = msg.visits || 20;
     var visitCount = 0;
+    // 推理看门狗：单线程 WASM 偶有 session.run 永不动(浏览器策略/内存压力)。
+    // 若超过阈值仍无进度回报，主动自杀并上报错误，由主线程重建 worker 并回退。
+    var watchdog = setTimeout(function () {
+      try { self.postMessage({ type: 'error', message: 'AI 推理看门狗触发：worker 无响应，已终止', reqId: msg.reqId }); } catch (e) {}
+      try { self.close(); } catch (e) {}
+    }, 28000);
     var evaluate = function (grid, sz, tm, hist, rl) {
       visitCount++;
       return netEvaluate(grid, sz, tm, hist, rl).then(function (r) {
@@ -137,6 +143,7 @@
     });
     return search.searchAsync(msg.grid, msg.toMove, msg.history, msg.rules, visits)
       .then(function (res) {
+        clearTimeout(watchdog);
         // res.value = 根局面网络 value (winP-lossP, [-1,1], toMove 视角)
         // 胜率 = (value+1)/2, 不用 sigmoid(会压缩到 0.27~0.73)
         var rootWin = res.value != null
@@ -144,12 +151,17 @@
           : 0.5;
         return {
           type: 'move',
+          reqId: msg.reqId,
           move: res.move,
           pass: res.pass,
           winrate: rootWin,
           value: res.value,
           visits: res.visits
         };
+      })
+      .catch(function (err) {
+        clearTimeout(watchdog);
+        throw err;
       });
   }
 
@@ -169,13 +181,13 @@
       }
     } else if (msg.type === 'genmove') {
       if (!session) {
-        self.postMessage({ type: 'error', message: '模型尚未加载' });
+        self.postMessage({ type: 'error', message: '模型尚未加载', reqId: msg.reqId });
         return;
       }
       genmove(msg).then(function (r) {
         self.postMessage(r);
       }).catch(function (err) {
-        self.postMessage({ type: 'error', message: String((err && err.message) || err) });
+        self.postMessage({ type: 'error', message: String((err && err.message) || err), reqId: msg.reqId });
       });
     }
   };
