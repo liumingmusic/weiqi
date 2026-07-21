@@ -1,6 +1,7 @@
 // Service Worker：缓存应用外壳，实现离线可用
-// v3: 模型下载改为分块断点续传+重试(修复 CDN 拉 72MB 偶发断流导致的回退)；露出真实错误原因。
-var CACHE = 'weiqi-v3';
+// v4: wasm 运行时改由 jsDelivr CDN 加载(修复国内网络把 GitHub Pages 大文件拦成 HTML
+//     导致 WebAssembly.instantiate 报 "expected magic word" 的问题)；CDN 不可达回退本地。
+var CACHE = 'weiqi-v4';
 var ASSETS = [
   './', './index.html', './manifest.webmanifest', './icon.svg',
   './css/style.css',
