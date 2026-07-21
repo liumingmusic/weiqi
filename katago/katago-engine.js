@@ -33,9 +33,9 @@
   // 单次推理最长等待时间(ms)。超时即视为 worker 卡死，自动回退内置 AI，避免永久卡 UI。
   var GENMOVE_TIMEOUT = 25000;
 
-  function setStatus(s) {
+  function setStatus(s, reason) {
     status = s;
-    if (cbStatus) cbStatus(s, progress);
+    if (cbStatus) cbStatus(s, progress, reason);
   }
   function setProgress(p) {
     progress = p;
@@ -72,7 +72,7 @@
       } else if (d.type === 'error') {
         // 加载期错误 -> fallback；生成期错误 -> 本次 genmove 失败
         if (status === 'loading' || status === 'idle') {
-          setStatus('fallback');
+          setStatus('fallback', d.message || '模型加载失败');
           if (loadReject) loadReject(new Error(d.message || '模型加载失败'));
         }
         if (genHandler && (!d.reqId || d.reqId === genHandler.reqId)) {
@@ -83,7 +83,7 @@
     worker.onerror = function (err) {
       var msg = (err && err.message) ? err.message : 'Worker 运行错误';
       if (status === 'loading' || status === 'idle') {
-        setStatus('fallback');
+        setStatus('fallback', msg);
         if (loadReject) loadReject(new Error(msg));
       }
       if (genHandler) { genHandler.reject(new Error(msg)); genHandler = null; }
@@ -96,7 +96,7 @@
     try { if (worker) worker.terminate(); } catch (e) {}
     worker = null;
     if (genHandler) { genHandler.reject(new Error('AI 推理超时，已回退内置 AI')); genHandler = null; }
-    if (status === 'ready') setStatus('fallback');
+    if (status === 'ready') setStatus('fallback', 'AI 推理超时，已回退内置 AI');
   }
 
   function init(opts) {
