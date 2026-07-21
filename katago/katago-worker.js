@@ -46,8 +46,9 @@
     ort.env.wasm.simd = true;
     ort.env.wasm.numThreads = 1;     // 单线程：无需 COOP/COEP，GitHub Pages 可直接跑
     ort.env.wasm.proxy = false;
-    // 不设置 wasmPaths：运行时字节由 ort-wasm-parts 分片解码后直接赋给
-    // ort.env.wasm.wasmBinary，onnxruntime 不会再发起任何 .wasm 网络请求。
+    // 注意：onnxruntime-web 1.17 不认 ort.env.wasm.wasmBinary 属性(源码里无此字段)，
+    // 必须用 ort.env.wasm.wasmPaths(对象映射：文件名->blob URL) 注入 wasm 字节。
+    // wasmPaths 的实际赋值见 loadAll() (解出 wasm 字节后包成 Blob)。
   }
 
   // 本 worker 所在目录(拼分片 URL，确保同源)
@@ -98,7 +99,17 @@
       self.postMessage({ type: 'progress', value: 0.02 * f });
     }).then(function (wasmBytes) {
       configureOrt();
-      ort.env.wasm.wasmBinary = wasmBytes;
+      // 把解码出的 wasm 字节包成 Blob，再用 ort.env.wasm.wasmPaths 对象映射到全部候选
+      // 文件名。运行时从 blob URL 直接取字节实例化，彻底不发任何 .wasm 网络请求
+      // (避开网络对二进制的 HTML 拦截；原 ort-wasm-simd.wasm 已删除故不可再走 URL 拉取)。
+      var wasmBlob = new Blob([wasmBytes], { type: 'application/wasm' });
+      var wasmUrl = URL.createObjectURL(wasmBlob);
+      ort.env.wasm.wasmPaths = {
+        'ort-wasm-simd.wasm': wasmUrl,
+        'ort-wasm-simd-threaded.wasm': wasmUrl,
+        'ort-wasm-threaded.wasm': wasmUrl,
+        'ort-wasm.wasm': wasmUrl
+      };
       self.postMessage({ type: 'progress', value: 0.05 });
       // 2) 模型权重(大)：进度条主要反映这部分
       return loadBundle('model-parts/', BUNDLE.modelParts, 'model', function (f) {
