@@ -30,6 +30,9 @@
 
   var cbProgress = null, cbStatus = null, cbThinking = null;
 
+  // 单次推理最长等待时间(ms)。超时即视为 worker 卡死，自动回退内置 AI，避免永久卡 UI。
+  var GENMOVE_TIMEOUT = 25000;
+
   function setStatus(s) {
     status = s;
     if (cbStatus) cbStatus(s, progress);
@@ -62,14 +65,19 @@
         if (d.value >= 0) setProgress(d.value);
         if (cbThinking) cbThinking(d.value);
       } else if (d.type === 'move') {
-        if (genHandler) { genHandler.resolve(d); genHandler = null; }
+        if (genHandler && d.reqId === genHandler.reqId) {
+          genHandler.resolve(d); genHandler = null;
+        }
+        // reqId 不匹配(过期请求)直接丢弃，避免串台
       } else if (d.type === 'error') {
         // 加载期错误 -> fallback；生成期错误 -> 本次 genmove 失败
         if (status === 'loading' || status === 'idle') {
           setStatus('fallback');
           if (loadReject) loadReject(new Error(d.message || '模型加载失败'));
         }
-        if (genHandler) { genHandler.reject(new Error(d.message || '推理失败')); genHandler = null; }
+        if (genHandler && (!d.reqId || d.reqId === genHandler.reqId)) {
+          genHandler.reject(new Error(d.message || '推理失败')); genHandler = null;
+        }
       }
     };
     worker.onerror = function (err) {
@@ -81,6 +89,14 @@
       if (genHandler) { genHandler.reject(new Error(msg)); genHandler = null; }
     };
     return worker;
+  }
+
+  // worker 卡死/崩溃后的自愈：销毁旧 worker，重置状态，下次 genmove 由调用方回退内置 AI
+  function recreateWorker() {
+    try { if (worker) worker.terminate(); } catch (e) {}
+    worker = null;
+    if (genHandler) { genHandler.reject(new Error('AI 推理超时，已回退内置 AI')); genHandler = null; }
+    if (status === 'ready') setStatus('fallback');
   }
 
   function init(opts) {
@@ -143,13 +159,34 @@
     if (status !== 'ready' || !worker) {
       return Promise.reject(new Error('KataGo 未就绪'));
     }
+    // 若上一次请求仍在途(应不会发生，app 已用 aiThinking 串行)，先取消旧的
+    if (genHandler) genHandler.reject(new Error('被新请求取代'));
+    var reqId = 'r' + (Date.now().toString(36)) + Math.floor(Math.random() * 1e4).toString(36);
     var input = boardToInput(board, color);
     input.type = 'genmove';
+    input.reqId = reqId;
     input.visits = opts.visits || defaultVisits(board.size);
     return new Promise(function (res, rej) {
-      genHandler = { resolve: res, reject: rej };
+      genHandler = { resolve: res, reject: rej, reqId: reqId };
       worker.postMessage(input);
+      // 超时保护：单线程 WASM 推理偶有卡死；超时即回退内置 AI，不让 UI 永久卡住
+      setTimeout(function () {
+        if (genHandler && genHandler.reqId === reqId) {
+          genHandler = null;
+          rej(new Error('AI 推理超时'));
+          recreateWorker(); // 重建 worker，避免后续请求也卡死
+          setStatus('fallback');
+        }
+      }, GENMOVE_TIMEOUT);
     });
+  }
+
+  // 主动取消当前在途请求(用户悔棋/重置时调用)，避免过期结果落到已变化棋盘上
+  function cancelCurrent() {
+    if (genHandler) {
+      genHandler.reject(new Error('已取消'));
+      genHandler = null;
+    }
   }
 
   // 不同棋盘尺寸给不同 visits：小棋盘可以多搜，大棋盘受 wasm 速度限制
@@ -164,6 +201,7 @@
     ready: ready,
     status: function () { return status; },
     genmove: genmove,
+    cancelCurrent: cancelCurrent,
     defaultVisits: defaultVisits,
     _boardToInput: boardToInput
   };
