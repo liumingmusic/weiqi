@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4ecd8">
+  <title>弈 · 围棋自学</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">弈<span class="sub">· 围棋自学</span></div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="play">对局</button>
+      <button class="tab" data-tab="tsumego">死活题</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ============ 对局 ============ -->
+    <section id="view-play" class="view">
+      <div class="stage">
+        <div id="board" class="board"></div>
+        <div id="scorecard" class="scorecard hidden">
+          <div class="sc-title">数子 · 中国规则（数目法）</div>
+          <div class="sc-tip">点选棋盘上的「死子」进行标记，再确认数子</div>
+          <div class="sc-body" id="sc-body"></div>
+          <div class="sc-actions">
+            <button id="sc-confirm" class="btn primary">确认数子</button>
+            <button id="sc-resume" class="btn">继续对局</button>
+          </div>
+        </div>
+      </div>
+
+      <aside class="panel">
+        <div class="row">
+          <span class="label">路数</span>
+          <div class="seg">
+            <button data-size="9">9 路</button>
+            <button data-size="13">13 路</button>
+            <button data-size="19" class="active">19 路</button>
+          </div>
+        </div>
+        <div class="row">
+          <span class="label">对战</span>
+          <div class="seg">
+            <button data-mode="pvp" class="active">人人</button>
+            <button data-mode="pve">人机</button>
+          </div>
+        </div>
+        <div class="pve-only hidden">
+          <div class="row">
+            <span class="label">难度</span>
+            <div class="seg">
+              <button data-level="junior" class="active">初级</button>
+              <button data-level="middle">中级</button>
+              <button data-level="advanced">高级</button>
+            </div>
+          </div>
+          <div class="row">
+            <span class="label">引擎</span>
+            <span id="engine-tag" class="tag" style="background:rgba(58,52,42,0.08);color:var(--ink-soft)">轻量 AI</span>
+          </div>
+          <div class="row">
+            <span class="label">我执</span>
+            <div class="seg">
+              <button data-human="1" class="active">黑</button>
+              <button data-human="2">白</button>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <span class="label">让子</span>
+          <select id="handicap" class="select">
+            <option value="0">无</option>
+            <option value="2">2 子</option>
+            <option value="4">4 子</option>
+            <option value="6">6 子</option>
+            <option value="8">8 子</option>
+            <option value="9">9 子</option>
+          </select>
+        </div>
+        <div class="row">
+          <span class="label">AI 速度</span>
+          <select id="aispeed" class="select">
+            <option value="0">即时</option>
+            <option value="250" selected>快</option>
+            <option value="700">慢</option>
+          </select>
+        </div>
+        <div class="row annot-row">
+          <span class="label">标注</span>
+          <button id="annot-toggle" class="btn small">关</button>
+        </div>
+        <div id="annot-tools" class="annot-tools hidden">
+          <div class="seg">
+            <button data-mtype="cross" class="active">叉号</button>
+            <button data-mtype="circle">圆圈</button>
+            <button data-mtype="triangle">三角</button>
+            <button data-mtype="num">数字</button>
+          </div>
+          <button id="annot-clear" class="btn small">清除</button>
+        </div>
+        <div class="row">
+          <span class="label">当前手</span>
+          <span id="turn" class="tag black">黑</span>
+        </div>
+        <div class="row">
+          <span class="label">手数</span>
+          <span id="moves" class="val">0</span>
+          <span class="label" style="margin-left:auto">用时</span>
+          <span id="timer" class="val">00:00</span>
+        </div>
+        <div class="actions">
+          <button id="undo" class="btn">悔棋</button>
+          <button id="reset" class="btn primary">重新开局</button>
+        </div>
+        <div class="actions">
+          <button id="pass" class="btn">停一手</button>
+          <button id="count" class="btn">数子判定</button>
+        </div>
+        <div class="actions">
+          <button id="export" class="btn">导出 SGF</button>
+        </div>
+        <p class="hint">人机模式下你落子后，AI 会自动应对。双方都「停一手」或点「数子判定」即按中国规则数目法结算。初级=轻量 AI；中级/高级=更强搜索 AI。点击「标注」可在棋盘上做记号（叉号/圆圈/三角/数字）。</p>
+      </aside>
+    </section>
+
+    <!-- ============ 死活题 ============ -->
+    <section id="view-tsumego" class="view hidden">
+      <div class="stage">
+        <div id="tboard" class="board"></div>
+        <div id="tstatus" class="tstatus"></div>
+      </div>
+      <aside class="panel">
+        <div class="ts-stats" id="ts-stats"></div>
+        <div class="row">
+          <span class="label">类型</span>
+          <select id="ts-type" class="select">
+            <option value="">全部</option>
+            <option value="做活">做活</option>
+            <option value="杀棋">杀棋</option>
+            <option value="导入">导入</option>
+          </select>
+        </div>
+        <div class="row">
+          <span class="label">难度</span>
+          <select id="ts-diff" class="select">
+            <option value="">全部</option>
+            <option value="入门">入门</option>
+            <option value="初级">初级</option>
+            <option value="中级">中级</option>
+          </select>
+        </div>
+        <div class="row">
+          <button id="ts-wrong" class="btn small">错题本</button>
+          <button id="ts-solution" class="btn small">看正解</button>
+        </div>
+        <div class="ts-info" id="ts-info"></div>
+        <div class="actions">
+          <button id="ts-prev" class="btn">上一题</button>
+          <button id="ts-next" class="btn primary">下一题</button>
+        </div>
+        <div class="ts-list" id="ts-list"></div>
+        <div class="row" style="margin-top:10px">
+          <label class="btn small" for="ts-import">导入 SGF 题库</label>
+          <input id="ts-import" type="file" accept=".sgf,text/plain" class="hidden">
+        </div>
+        <p class="hint">点击棋盘落子解题：走中正解即判对；走错会标记叉号并提示正解点。进度与错题自动保存在本机。</p>
+      </aside>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <!-- KataGo 模型加载 / 思考 动画 -->
+  <div id="katago-overlay" class="katago-overlay hidden" role="dialog" aria-modal="true">
+    <div class="katago-card">
+      <div class="katago-ink" aria-hidden="true">
+        <svg viewBox="0 0 120 120" width="120" height="120">
+          <circle class="ink-c ink-c1" cx="60" cy="60" r="13"></circle>
+          <circle class="ink-c ink-c2" cx="60" cy="60" r="13"></circle>
+          <circle class="ink-c ink-c3" cx="60" cy="60" r="13"></circle>
+          <circle class="ink-stone" cx="60" cy="60" r="15"></circle>
+        </svg>
+      </div>
+      <div class="katago-title" id="katago-title">正在唤醒 AI 大脑…</div>
+      <div class="katago-msg" id="katago-msg">首次需下载围棋模型（约 80&nbsp;MB），请稍候</div>
+      <div class="katago-bar" id="katago-bar-wrap"><div class="katago-bar-fill" id="katago-bar"></div></div>
+      <div class="katago-sub" id="katago-sub"></div>
+      <button class="btn primary hidden" id="katago-ok">知道了</button>
+    </div>
+  </div>
+  <div id="katago-think" class="katago-think hidden">
+    <span class="spin"></span><span id="katago-think-text">AI 思考中…</span>
+  </div>
+
+  <script src="js/board.js"></script>
+  <script src="js/sgf.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/tsumego-data.js"></script>
+  <script src="katago/katago-engine.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

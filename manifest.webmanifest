@@ -1,0 +1,13 @@
+{
+  "name": "弈 · 围棋自学",
+  "short_name": "弈",
+  "description": "免费的围棋自学站：AI 对练 + 死活题，纯本地、免会员。",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4ecd8",
+  "theme_color": "#f4ecd8",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

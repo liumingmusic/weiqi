@@ -1,0 +1,8 @@
+# 工作区/会话数据，不入库
+.workbuddy/
+# 临时凭据缓存（仅本会话 push 用，绝不入库）
+.gh_token_push
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+*.swp
