@@ -70,11 +70,14 @@ python3 -m http.server 8080
 │   └── store.js            # IndexedDB 持久化
 ├── katago/
 │   ├── katago-engine.js    # 主线程引擎封装（状态机 + 失败回退）
-│   ├── katago-worker.js    # Web Worker：编码 + 推理 + PUCT
+│   ├── katago-worker.js    # Web Worker：加载分片 + 推理 + PUCT
+│   ├── bundle-manifest.js  # 分片数量清单 { wasmParts, modelParts }
 │   ├── features.js         # KataGo v10 特征编码器（22 通道 + 19 全局）
 │   ├── search.js           # 纯 JS PUCT/MCTS 搜索
-│   ├── ort/                # onnxruntime-web 运行时（ort.min.js + ort-wasm-simd.wasm）
-│   ├── model/              # KataGo 模型（.onnx，随仓库分发）
+│   ├── ort/                # onnxruntime-web 运行时 JS（ort.min.js）
+│   ├── ort-wasm-parts/     # wasm 运行时 base64 分片（同源 .js，约 14 MB）
+│   ├── model-parts/        # KataGo 模型 base64 分片（同源 .js，约 96 MB）
+│   ├── model/              # KataGo 模型源文件（.onnx，分片由它生成）
 │   ├── fetch_model.sh      # 从镜像下载模型的脚本
 │   └── test/               # 单元/集成/真模型回归测试
 ├── sw.js                   # Service Worker（离线缓存）
@@ -86,7 +89,7 @@ python3 -m http.server 8080
 
 ## 🤖 关于 AI 模型
 
-- 仓库已自带模型 `katago/model/kata1-b28c512nbt-s12043015936-d5616446734.uint8.onnx`（约 72 MB），克隆即离线可用。
+- 仓库已自带模型源文件 `katago/model/kata1-b28c512nbt-s12043015936-d5616446734.uint8.onnx`（约 72 MB），克隆即离线可用。
 - 模型来源：KataGo 28-block 网络，权重来自 HuggingFace `kaya-go/kaya`（经国内镜像 `hf-mirror.com` 下载；`huggingface.co` 直连可能被墙）。
 - 如需重新下载或换模型：
 
@@ -94,24 +97,26 @@ python3 -m http.server 8080
   bash katago/fetch_model.sh
   ```
 
-  然后修改 `katago/katago-worker.js` 中的默认模型路径即可。
+### 模型与 WASM 全部自托管打包（彻底规避网络拦截）
 
-### WASM 运行时走 CDN（解决国内加载失败）
+本项目的 wasm 运行时（约 10 MB）与 KataGo 模型（约 72 MB）**不再走任何 `.wasm` / `.onnx` 直链，也不再依赖外部 CDN**。
 
-KataGo 的 WASM 运行时（`ort-wasm-simd.wasm`，约 10 MB）**默认从 jsDelivr CDN 加载**
-（`fastly.jsdelivr.net` 国内镜像，返回 `Access-Control-Allow-Origin: *` 的合法 wasm）。
-原因：GitHub Pages 对大文件在部分国内网络下会被拦截并返回 HTML 错误页，
-导致 `WebAssembly.instantiate` 报 `expected magic word 00 61 73 6d, found 3c 21 44 4f`（即拿到 `<!DOCTYPE`）。
-运行时按 `fastly.jsdelivr.net → cdn.jsdelivr.net → 本地 ort/` 三级回退，本地文件仍在仓库内兜底。
-若想完全自托管，把 `katago/katago-worker.js` 里的 `ORT_WASM_CDNS` 改成你自己的 CDN 地址即可。
+原因：部分网络（公司 / 校园 / 地区防火墙）会对 `.wasm` 或大体积二进制请求返回 HTML 拦截页，
+导致 `WebAssembly.instantiate` 报 `expected magic word 00 61 73 6d, found 3c 21 44 6f`（即拿到 `<!DOCTYPE`）；
+jsDelivr 等公共 CDN 同样可能被这类网络拦截。
 
-### 模型能否走公共 CDN？
+解法：构建时把 wasm 与模型都 `base64` 化、切成多个**同源 `.js` 分片**：
 
-目前**不行**：72 MB 模型没有「CORS 开放」的公共 CDN 可用——
-jsDelivr gh 对 >50 MB 文件返回 403，hf-mirror 跳转后的真实地址未带 `Access-Control-Allow-Origin`（浏览器跨域会被拦）。
-因此模型仍走 GitHub Pages 同源（无 CORS 问题，仅取决于网络能否拉大文件，已做分块断点续传+重试兜底）。
-如果你要自己托管模型 CDN：把模型放到**腾讯云 COS / 阿里云 OSS** 等并配置 `Access-Control-Allow-Origin: *`，
-再把地址填进 `katago/katago-worker.js` 的 `MODEL_MIRRORS` 数组即可自动回退使用。
+- `katago/ort-wasm-parts/part_00.js … part_02.js` —— wasm 运行时分片
+- `katago/model-parts/part_00.js … part_17.js`    —— 模型权重分片
+- `katago/bundle-manifest.js`                      —— 分片数量清单
+
+浏览器按普通 JS 加载这些同源 `.js`（同域、无扩展名拦截），Worker 在运行时把分片解码回字节，
+直接交给 onnxruntime（`ort.env.wasm.wasmBinary`），**全程不发任何二进制请求**。
+因此即使网络拦截 `.wasm` / `.onnx`，真模型依然可用。代价是仓库体积较大（约 +110 MB），换来最强的网络兼容性。
+
+> 若需换模型：把新 `.onnx` 放到 `katago/model/`，重新跑分片生成（把模型 base64 切到 `katago/model-parts/`），
+> 更新 `katago/bundle-manifest.js` 里的 `modelParts` 数量即可，其余代码无需改动。
 
 ---
 
@@ -146,7 +151,8 @@ git push origin master
 
 部署后访问：`https://<用户名>.github.io/weiqi/`
 
-> 注意：72 MB 模型首次经 Pages 下载稍慢，但浏览器缓存 + Service Worker 之后只下一次，离线可用。
+> 注意：wasm / 模型以同源 `.js` 分片形式随仓库发布，首次加载需下载约 110 MB（分片较多），
+> 但浏览器缓存 + Service Worker 之后只下一次，离线可用。
 
 ---
 
