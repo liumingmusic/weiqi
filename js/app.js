@@ -214,9 +214,13 @@
           showKataThink(false);
           applyKataMove(res);
         })
-        .catch(function () {
+        .catch(function (err) {
           aiThinking = false;
           showKataThink(false);
+          // 推理超时/失败：自动回退到内置 AI，不让对局卡住
+          if (err && /超时|无响应|卡死/.test(err.message)) {
+            toast('KataGo 推理较慢/超时，本手改用内置 AI');
+          }
           aiStepLight(); // 本次推理失败，回退内置 AI
         });
       return;
@@ -267,6 +271,7 @@
         } else if (s === 'fallback') {
           showKataFallback();
           updateEngineTag();
+          toast('KataGo 不可用，已回退到内置 AI');
           if (mode === 'pve' && board.current === aiColor && !gameOver) scheduleAI();
         }
       }
@@ -413,6 +418,7 @@
   }
 
   function newGame(size) {
+    if (window.KataEngine && KataEngine.cancelCurrent) KataEngine.cancelCurrent();
     if (size) board.reset(size); else board.reset();
     applyHandicapFromUI();
     scoring = false; gameOver = false; playMarkers = []; numCounter = 0;
@@ -729,6 +735,7 @@
 
     document.getElementById('undo').addEventListener('click', function () {
       if (!board.history.length) { toast('没有可悔的棋'); return; }
+      if (window.KataEngine && KataEngine.cancelCurrent) KataEngine.cancelCurrent();
       board.undo();
       if (mode === 'pve' && board.history.length && board.current === aiColor) board.undo();
       scoring = false; gameOver = false;
