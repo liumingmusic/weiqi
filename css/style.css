@@ -54,11 +54,20 @@ body {
 }
 .tab.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 
+/* 默认(PC/宽屏)：左右两栏布局。棋盘在左、控制面板在右 */
 .view {
   padding: 24px;
   display: flex;
   gap: 28px;
   flex-wrap: wrap;
+  justify-content: center;
+}
+/* 对局页：PC 端棋盘固定左、面板固定右，不再随内容居中都挤中间 */
+.play-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 640px) minmax(260px, 360px);
+  gap: 32px;
+  align-items: start;
   justify-content: center;
 }
 .stage {
@@ -70,7 +79,7 @@ body {
 }
 .board svg.scoring { opacity: 0.92; }
 .board svg.scoring rect:first-of-type { fill: #e7dcc0; }
-.board svg { display: block; width: 100%; height: auto; max-width: min(92vw, 600px); touch-action: none; }
+.board svg { display: block; width: 100%; height: auto; max-width: min(92vw, 640px); touch-action: none; }
 
 .panel {
   min-width: 220px;
@@ -189,13 +198,26 @@ body {
   .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 8px; }
   .brand { font-size: 22px; }
   .view { padding: 12px; gap: 14px; }
+  /* 对局页：手机端改为上下布局(棋盘在上、面板在下) */
+  .play-layout {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
   .stage { padding: 10px; width: 100%; display: flex; flex-direction: column; align-items: center; }
   .board svg { max-width: 96vw; }
-  .panel { width: 100%; min-width: 0; }
+  .panel { width: 100%; min-width: 0; max-width: 560px; }
   .row { gap: 10px; }
   .seg button { padding: 8px 10px; }
   .actions { flex-wrap: wrap; }
   .scorecard { width: 88%; }
+}
+
+/* 中屏(窄桌面/平板横屏)：棋盘适当收一点，避免两栏被压太窄 */
+@media (min-width: 721px) and (max-width: 1080px) {
+  .play-layout { grid-template-columns: minmax(300px, 520px) minmax(240px, 320px); gap: 24px; }
+  .board svg { max-width: 520px; }
 }
 
 /* 数子面板 */
