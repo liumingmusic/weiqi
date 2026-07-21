@@ -6,9 +6,11 @@
  * 因此 UI 不会因推理卡死。
  *
  * 依赖 (importScripts 相对本 worker 所在目录 katago/)：
- *   ort/ort.min.js      onnxruntime-web 运行时(已打包进仓库, 离线可用)
+ *   ort/ort.min.js      onnxruntime-web 运行时(本地打包兜底；wasm 二进制优先走 jsDelivr CDN)
  *   features.js         KataGo v10 特征编码器
  *   search.js           PUCT / MCTS 搜索
+ * 说明：wasm 运行时优先从 jsDelivr(fastly 国内镜像, CORS:*) 加载，避免 GitHub Pages
+ *       大文件被网络拦截成 HTML 导致 WebAssembly 实例化失败；CDN 不可达时回退本地 ort/。
  *
  * 消息协议 (主线程 -> worker)：
  *   { type:'load',   modelUrl? }  加载模型
@@ -36,15 +38,24 @@
 
   var session = null;
 
+  // wasm 运行时优先走 CDN（国内网络对 GitHub Pages 的 10MB 大文件常被拦截成 HTML，
+  // 导致 WebAssembly.instantiate 拿到 <!DOCTYPE -> CompileError "expected magic word"）。
+  // jsDelivr(fastly 为国内镜像) 返回 CORS:* 的合法 wasm；按顺序回退，最后才用本地。
+  var ORT_WASM_CDNS = [
+    'https://fastly.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/',
+    'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/'
+  ];
+
   function configureOrt() {
-    // importScripts 的基准目录
+    // importScripts 的基准目录(本地 wasm 回退用)
     var base = self.location.href.substring(0, self.location.href.lastIndexOf('/') + 1);
-    // wasm 二进制所在目录(必须以 / 结尾)
-    ort.env.wasmPaths = base + 'ort/';
+    self.__localWasm = base + 'ort/';
     ort.env.wasm.simd = true;
     // 单线程：避免需要 COOP/COEP 跨域隔离，GitHub Pages 也能直接跑
     ort.env.wasm.numThreads = 1;
     ort.env.wasm.proxy = false;
+    // 默认优先 CDN wasm；loadModel 失败会自动回退到本地
+    ort.env.wasm.wasmPaths = ORT_WASM_CDNS[0];
   }
 
   // 断点续传 + 失败重试的模型下载。
@@ -127,12 +138,46 @@
     });
   }
 
+  // 创建推理会话；把 wasm 来源作为可变参数，便于失败切换。
+  function createSession(arrayBuffer, wasmPaths) {
+    ort.env.wasm.wasmPaths = wasmPaths;
+    return ort.InferenceSession.create(arrayBuffer, {
+      executionProviders: ['wasm'],
+      graphOptimizationLevel: 'all'
+    });
+  }
+
+  // 模型下载来源回退链：先本地(Pages 同源)，再可选镜像(用户自建 OSS/COS，需 CORS:*)。
+  // 注意：hf-mirror 等公共镜像跳转后无 ACAO，浏览器跨域会被拦，不能直接用；
+  // 若要自备模型 CDN，把地址填进 MODEL_MIRRORS 即可(需服务端返回 Access-Control-Allow-Origin:*)。
+  var MODEL_MIRRORS = [];
+
   function loadModel(modelUrl) {
-    return fetchModel(modelUrl).then(function (arrayBuffer) {
-      return ort.InferenceSession.create(arrayBuffer, {
-        executionProviders: ['wasm'],
-        graphOptimizationLevel: 'all'
+    var sources = [modelUrl].concat(MODEL_MIRRORS);
+    function trySource(i) {
+      if (i >= sources.length) return Promise.reject(new Error('模型所有来源均下载失败'));
+      return fetchModel(sources[i]).catch(function (err) {
+        if (i + 1 < sources.length) {
+          self.postMessage({ type: 'progress', value: -1 });
+          return trySource(i + 1);
+        }
+        throw err;
       });
+    }
+    return trySource(0).then(function (arrayBuffer) {
+      // wasm 来源三级回退：CDN(fastly) -> CDN(cdn) -> 本地
+      var candidates = ORT_WASM_CDNS.concat([self.__localWasm]);
+      function tryWasm(j) {
+        if (j >= candidates.length) return Promise.reject(new Error('所有 wasm 来源均失败'));
+        return createSession(arrayBuffer, candidates[j]).catch(function (e) {
+          if (j + 1 < candidates.length) {
+            self.postMessage({ type: 'progress', value: -1 }); // 切换来源，进度转为不确定
+            return tryWasm(j + 1);
+          }
+          throw e;
+        });
+      }
+      return tryWasm(0);
     }).then(function (s) {
       session = s;
       return s;
