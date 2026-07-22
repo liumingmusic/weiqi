@@ -20,7 +20,7 @@
 
   // 带版本查询串：与 SW(weiqi-v7) 配合，确保浏览器永远加载到最新 worker，
   // 不会被旧 Service Worker 缓存的旧 worker 卡住。worker 内容变更时同步 +1。
-  var WORKER_URL = 'katago/katago-worker.js?v=8';
+  var WORKER_URL = 'katago/katago-worker.js?v=9';
 
   var worker = null;
   var status = 'idle';            // idle | loading | ready | fallback
@@ -73,12 +73,16 @@
         // reqId 不匹配(过期请求)直接丢弃，避免串台
       } else if (d.type === 'error') {
         // 加载期错误 -> fallback；生成期错误 -> 本次 genmove 失败
+        var stage = d.stage || 'unknown';
+        var reason = (d.message ? String(d.message) : '未知错误');
+        var display = (stage !== 'unknown' ? '[' + stage + '] ' : '') + reason;
+        if (d.stack) console.error('[KataGo] 详细错误:', d.name, '\n' + d.stack);
         if (status === 'loading' || status === 'idle') {
-          setStatus('fallback', d.message || '模型加载失败');
-          if (loadReject) loadReject(new Error(d.message || '模型加载失败'));
+          setStatus('fallback', display);
+          if (loadReject) loadReject(new Error(display));
         }
         if (genHandler && (!d.reqId || d.reqId === genHandler.reqId)) {
-          genHandler.reject(new Error(d.message || '推理失败')); genHandler = null;
+          genHandler.reject(new Error(display)); genHandler = null;
         }
       }
     };
