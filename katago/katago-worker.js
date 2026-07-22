@@ -41,6 +41,7 @@
   var BUNDLE = self.__BUNDLE__ || { wasmParts: 3, modelParts: 18 };
 
   var session = null;
+  var wasmUrl = null;     // wasm blob URL(用完即 revoke)
 
   function configureOrt() {
     ort.env.wasm.simd = true;
@@ -80,6 +81,16 @@
     });
   }
 
+  // 把异常包装成结构化错误，保留 name/message/stack，避免被 String() 压成裸数字。
+  function stageError(stage, e) {
+    return {
+      stage: stage,
+      name: (e && e.name) || (typeof e === 'number' ? 'AbortCode' : 'Error'),
+      message: (e && e.message != null && e.message !== '') ? String(e.message) : String(e),
+      stack: (e && e.stack) ? String(e.stack) : ''
+    };
+  }
+
   // 并行下载某 bundle 的 base64 分片(.js 同源)，解码并拼接为单个 Uint8Array。
   // dir 形如 'ort-wasm-parts/' 或 'model-parts/'；count 来自 BUNDLE。
   function loadBundle(dir, count, label, onProgress) {
@@ -115,28 +126,49 @@
     return loadBundle('ort-wasm-parts/', BUNDLE.wasmParts, 'wasm', function (f) {
       self.postMessage({ type: 'progress', value: 0.02 * f });
     }).then(function (wasmBytes) {
-      configureOrt();
-      // 把解码出的 wasm 字节包成 Blob，再用 ort.env.wasm.wasmPaths 对象映射到全部候选
-      // 文件名。运行时从 blob URL 直接取字节实例化，彻底不发任何 .wasm 网络请求
-      // (避开网络对二进制的 HTML 拦截；原 ort-wasm-simd.wasm 已删除故不可再走 URL 拉取)。
-      var wasmBlob = new Blob([wasmBytes], { type: 'application/wasm' });
-      var wasmUrl = URL.createObjectURL(wasmBlob);
-      ort.env.wasm.wasmPaths = {
-        'ort-wasm-simd.wasm': wasmUrl,
-        'ort-wasm-simd-threaded.wasm': wasmUrl,
-        'ort-wasm-threaded.wasm': wasmUrl,
-        'ort-wasm.wasm': wasmUrl
-      };
-      self.postMessage({ type: 'progress', value: 0.05 });
+      try {
+        configureOrt();
+        // 把解码出的 wasm 字节包成 Blob，再用 ort.env.wasm.wasmPaths 对象映射到全部候选
+        // 文件名。运行时从 blob URL 直接取字节实例化，彻底不发任何 .wasm 网络请求
+        // (避开网络对二进制的 HTML 拦截；原 ort-wasm-simd.wasm 已删除故不可再走 URL 拉取)。
+        var wasmBlob = new Blob([wasmBytes], { type: 'application/wasm' });
+        wasmUrl = URL.createObjectURL(wasmBlob);
+        ort.env.wasm.wasmPaths = {
+          'ort-wasm-simd.wasm': wasmUrl,
+          'ort-wasm-simd-threaded.wasm': wasmUrl,
+          'ort-wasm-threaded.wasm': wasmUrl,
+          'ort-wasm.wasm': wasmUrl
+        };
+        self.postMessage({ type: 'progress', value: 0.05 });
+      } catch (e) {
+        throw stageError('wasm-setup', e);
+      }
       // 2) 模型权重(大)：进度条主要反映这部分
       return loadBundle('model-parts/', BUNDLE.modelParts, 'model', function (f) {
         self.postMessage({ type: 'progress', value: f });
       });
     }).then(function (modelBytes) {
-      return ort.InferenceSession.create(modelBytes, {
-        executionProviders: ['wasm'],
-        graphOptimizationLevel: 'all'
-      });
+      try {
+        // 关键：用本地 Blob URL 把模型交给 onnxruntime，而非直接传 72MB 的 Uint8Array。
+        // 这样 JS 端那份 72MB 副本可在 create 前释放，避免「JS 数组 + WASM 内拷贝」同时
+        // 驻留导致峰值内存翻倍(OOM/abort)。blob: 走内存、不经 SW、无 CORS 问题。
+        var modelBlob = new Blob([modelBytes], { type: 'application/octet-stream' });
+        var modelUrl = URL.createObjectURL(modelBlob);
+        modelBytes = null; // 释放 JS 端大数组，降低峰值内存
+        // graphOptimizationLevel: 'basic' 而非 'all' —— 降低图优化期的峰值内存，
+        // 规避 onnxruntime-web 1.17 对大图 'all' 优化偶发的崩溃/中止。
+        return ort.InferenceSession.create(modelUrl, {
+          executionProviders: ['wasm'],
+          graphOptimizationLevel: 'basic'
+        }).then(function (s) {
+          try { URL.revokeObjectURL(modelUrl); } catch (e) {}
+          return s;
+        }).catch(function (e) {
+          throw stageError('session-create', e);
+        });
+      } catch (e) {
+        throw stageError('session-create', e);
+      }
     }).then(function (s) {
       session = s;
       self.postMessage({ type: 'loaded' });
@@ -220,13 +252,19 @@
   self.onmessage = function (e) {
     var msg = e.data || {};
     if (msg.type === 'load') {
-      try {
-        loadAll().catch(function (err) {
-          self.postMessage({ type: 'error', message: String((err && err.message) || err) });
-        });
-      } catch (err) {
-        self.postMessage({ type: 'error', message: String((err && err.message) || err) });
-      }
+      loadAll().catch(function (err) {
+        // 转发结构化错误(阶段 + name + message + stack)，避免被压成裸数字。
+        if (err && err.stage) {
+          self.postMessage({ type: 'error', stage: err.stage, name: err.name, message: err.message, stack: err.stack });
+        } else {
+          self.postMessage({
+            type: 'error', stage: 'unknown',
+            name: (err && err.name) || 'Error',
+            message: String((err && err.message) || err),
+            stack: (err && err.stack) || ''
+          });
+        }
+      });
     } else if (msg.type === 'genmove') {
       if (!session) {
         self.postMessage({ type: 'error', message: '模型尚未加载', reqId: msg.reqId });
@@ -235,7 +273,10 @@
       genmove(msg).then(function (r) {
         self.postMessage(r);
       }).catch(function (err) {
-        self.postMessage({ type: 'error', message: String((err && err.message) || err), reqId: msg.reqId });
+        var payload = { type: 'error', reqId: msg.reqId };
+        if (err && err.stage) { payload.stage = err.stage; payload.name = err.name; payload.message = err.message; payload.stack = err.stack; }
+        else { payload.stage = 'genmove'; payload.name = (err && err.name) || 'Error'; payload.message = String((err && err.message) || err); payload.stack = (err && err.stack) || ''; }
+        self.postMessage(payload);
       });
     }
   };
