@@ -64,6 +64,22 @@
     return u8;
   }
 
+  // 带重试的 fetch：Service Worker 偶发异常/网络抖动时，重试可避免单次失败导致整模型回退。
+  function fetchWithRetry(u, tries) {
+    tries = tries || 3;
+    return fetch(u).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r;
+    }).catch(function (err) {
+      if (tries > 1) {
+        return new Promise(function (res, rej) {
+          setTimeout(function () { fetchWithRetry(u, tries - 1).then(res, rej); }, 400);
+        });
+      }
+      throw err;
+    });
+  }
+
   // 并行下载某 bundle 的 base64 分片(.js 同源)，解码并拼接为单个 Uint8Array。
   // dir 形如 'ort-wasm-parts/' 或 'model-parts/'；count 来自 BUNDLE。
   function loadBundle(dir, count, label, onProgress) {
@@ -75,13 +91,14 @@
     var parts = new Array(count);
     var done = 0;
     return Promise.all(urls.map(function (u, idx) {
-      return fetch(u).then(function (r) {
-        if (!r.ok) throw new Error(label + ' 分片 #' + idx + ' 下载失败 HTTP ' + r.status);
+      return fetchWithRetry(u).then(function (r) {
         return r.text();
       }).then(function (txt) {
         parts[idx] = b64ToBytes((txt || '').trim());
         done++;
         if (onProgress) onProgress(done / count, label);
+      }).catch(function (err) {
+        throw new Error(label + ' 分片 #' + idx + ' 下载失败：' + (err && err.message));
       });
     })).then(function () {
       var total = 0, k;
