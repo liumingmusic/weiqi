@@ -18,9 +18,9 @@
 (function (root) {
   'use strict';
 
-  // 带版本查询串：与 SW(weiqi-v6) 配合，确保浏览器永远加载到最新 worker，
+  // 带版本查询串：与 SW(weiqi-v7) 配合，确保浏览器永远加载到最新 worker，
   // 不会被旧 Service Worker 缓存的旧 worker 卡住。worker 内容变更时同步 +1。
-  var WORKER_URL = 'katago/katago-worker.js?v=7';
+  var WORKER_URL = 'katago/katago-worker.js?v=8';
 
   var worker = null;
   var status = 'idle';            // idle | loading | ready | fallback
