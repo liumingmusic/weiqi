@@ -249,13 +249,16 @@
     return mode === 'pve' && (aiLevel === 'middle' || aiLevel === 'advanced');
   }
 
+  // 后台静默加载 KataGo：不弹遮罩、不打断对局。
+  // 内置搜索 AI 永远是"保底可用"的默认引擎；真模型加载成功则悄悄接管(下一手起生效)，
+  // 失败则完全安静(仅 console 记录)，用户对局不受任何影响。
   function ensureKata() {
     if (kataInitStarted) return;
+    if (!KataEngine) return;
     kataInitStarted = true;
     updateEngineTag();
-    showKataOverlayLoading();
     KataEngine.init({
-      onProgress: updateKataProgress,
+      onProgress: function () {},   // 静默加载，不展示进度
       onThinking: function (p) {
         if (p != null && p >= 0) {
           var t = document.getElementById('katago-think-text');
@@ -264,16 +267,12 @@
       },
       onStatus: function (s, p, reason) {
         if (s === 'ready') {
-          hideKataOverlay();
           updateEngineTag();
-          toast('KataGo 已就绪，开始思考');
-          if (mode === 'pve' && board.current === aiColor && !gameOver) scheduleAI();
+          toast('KataGo 真模型已就绪，下一手起生效');
         } else if (s === 'fallback') {
-          if (reason) console.warn('[KataGo] 模型不可用，原因：', reason);
-          showKataFallback(reason);
+          // 静默回退：内置 AI 本来就在对弈中，无需打扰用户
+          if (reason) console.warn('[KataGo] 真模型不可用(继续使用内置 AI)，原因：', reason);
           updateEngineTag();
-          toast('KataGo 不可用，已回退到内置 AI');
-          if (mode === 'pve' && board.current === aiColor && !gameOver) scheduleAI();
         }
       }
     });
@@ -371,8 +370,8 @@
     }
     var st = KataEngine ? KataEngine.status() : 'idle';
     if (st === 'ready') { el.textContent = 'KataGo'; el.style.background = 'var(--cinnabar)'; el.style.color = '#fff'; }
-    else if (st === 'fallback') { el.textContent = '搜索 AI(内置)'; el.style.background = 'rgba(58,52,42,0.08)'; el.style.color = 'var(--ink-soft)'; }
-    else { el.textContent = '加载中…'; el.style.background = 'rgba(58,52,42,0.08)'; el.style.color = 'var(--ink-soft)'; }
+    else if (st === 'loading') { el.textContent = '搜索 AI（真模型后台加载中）'; el.style.background = 'rgba(58,52,42,0.08)'; el.style.color = 'var(--ink-soft)'; }
+    else { el.textContent = '搜索 AI(内置)'; el.style.background = 'rgba(58,52,42,0.08)'; el.style.color = 'var(--ink-soft)'; }
   }
 
   function humanPass() {
@@ -454,15 +453,8 @@
     document.getElementById('sc-resume').classList.remove('hidden');
     renderPlay(); updateInfo(); startTimer();
     updateEngineTag();
-    if (useKata()) {
-      var st = (KataEngine ? KataEngine.status() : 'idle');
-      if (st === 'ready' || st === 'fallback') {
-        if (board.current === aiColor) scheduleAI();
-      } else {
-        ensureKata(); // 加载完成后由 onStatus 触发 AI
-      }
-      return;
-    }
+    // 永不等待模型：立刻用内置 AI 开玩；KataGo 在后台静默加载，就绪后自动接管
+    if (useKata()) ensureKata();
     if (board.current === aiColor) scheduleAI();
   }
 
