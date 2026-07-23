@@ -119,6 +119,9 @@
     var p = new Promise(function (res, rej) {
       loadResolve = res; loadReject = rej;
     });
+    // 预挂一个空 catch：加载失败属"可接受的静默回退"(内置 AI 兜底)，
+    // 即使调用方不消费该 Promise，也不会在控制台产生 Uncaught (in promise)。
+    p.catch(function () {});
     w.postMessage({ type: 'load', modelUrl: modelUrl });
     return p;
   }
